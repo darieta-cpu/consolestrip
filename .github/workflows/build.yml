@@ -1,1 +1,44 @@
+name: Build plugin
 
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build-mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -B build -G Xcode
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Sign (ad hoc) and package
+        run: |
+          mkdir -p dist
+          find build -type d \( -name "*.component" -o -name "*.vst3" \) -prune -exec cp -R {} dist/ \;
+          for f in dist/*; do codesign --force --deep -s - "$f"; done
+          cd dist && zip -ry ../ConsoleStrip-mac.zip .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ConsoleStrip-macOS-AU-VST3
+          path: ConsoleStrip-mac.zip
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -B build -A x64
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Package
+        shell: bash
+        run: |
+          mkdir dist
+          find build -type d -name "*.vst3" -prune -exec cp -R {} dist/ \;
+          ls -la dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ConsoleStrip-Windows-VST3
+          path: dist
