@@ -461,7 +461,7 @@ void ChannelStripAudioProcessor::setStateInformation (const void* data, int size
 void ChannelStripAudioProcessor::updateTrackProperties (const TrackProperties& properties)
 {
     const juce::ScopedLock sl (trackNameLock);
-    trackName = properties.name.has_value() ? *properties.name : juce::String();
+    trackName = properties.name;
 }
 
 juce::String ChannelStripAudioProcessor::getTrackName() const
