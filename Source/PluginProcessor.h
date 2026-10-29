@@ -121,6 +121,10 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
+    // Track name as reported by the host (if the host supports it)
+    void updateTrackProperties (const TrackProperties& properties) override;
+    juce::String getTrackName() const;
+
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
     juce::AudioProcessorValueTreeState apvts;
@@ -151,6 +155,9 @@ private:
     void stageDynamics (juce::AudioBuffer<float>&, const Params&);
     void stageEq (juce::AudioBuffer<float>&, const Params&);
     void stageOutput (juce::AudioBuffer<float>&, const Params&);
+
+    mutable juce::CriticalSection trackNameLock;
+    juce::String trackName;
 
     double sr = 44100.0;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> trimSmooth, outSmooth;

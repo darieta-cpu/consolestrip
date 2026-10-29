@@ -8,6 +8,7 @@ namespace
     const juce::Colour kAmber  (0xffe8a317);
     const juce::Colour kLedOn  (0xffff3b2a);
     const juce::Colour kLedOff (0xff3a1210);
+    const juce::Colour kLcd    (0xff7dff8a);
 }
 
 //==============================================================================
@@ -176,21 +177,35 @@ void LevelMeter::paint (juce::Graphics& g)
 
     if (mode == Mode::level)
     {
-        int litIdx = rms  > -60.0f ? (int) std::floor ((rms  + 60.0f) / 3.0f) : -1;
-        int pkIdx  = peak > -60.0f ? (int) std::floor ((peak + 60.0f) / 3.0f) : -1;
-        litIdx = juce::jmin (litIdx, numSeg - 1);
-        pkIdx  = juce::jmin (pkIdx, numSeg - 1);
+        constexpr float minDb = -60.0f, step = 3.0f;
+
+        // exact vertical position of a dB value (continuous inside each LED)
+        auto yOf = [&] (float db)
+        {
+            const float pos = juce::jlimit (0.0f, (float) numSeg - 0.0001f, (db - minDb) / step);
+            const int i = (int) std::floor (pos);
+            const auto r = segRect (i);
+            return r.getBottom() - r.getHeight() * (pos - (float) i);
+        };
 
         for (int i = 0; i < numSeg; ++i)
         {
-            const float t = -60.0f + 3.0f * (float) i;
-            juce::Colour col = t >= 0.0f   ? juce::Colour (0xffff3b30)
-                             : t >= -6.0f  ? juce::Colour (0xffff9800)
-                             : t >= -12.0f ? juce::Colour (0xffe6d23a)
-                                           : juce::Colour (0xff3ddc4a);
-            const bool lit = (i <= litIdx) || (i == pkIdx);
-            g.setColour (lit ? col : col.withAlpha (0.13f));
-            g.fillRect (segRect (i));
+            const float lo = minDb + step * (float) i;
+            const juce::Colour col = lo >= 0.0f   ? juce::Colour (0xffff3b30)
+                                   : lo >= -6.0f  ? juce::Colour (0xffff9800)
+                                   : lo >= -12.0f ? juce::Colour (0xffe6d23a)
+                                                  : juce::Colour (0xff3ddc4a);
+            const auto r = segRect (i);
+
+            g.setColour (col.withAlpha (0.13f));
+            g.fillRect (r);
+
+            const float f = juce::jlimit (0.0f, 1.0f, (rms - lo) / step);
+            if (f > 0.0f)
+            {
+                g.setColour (col);
+                g.fillRect (r.getX(), r.getBottom() - r.getHeight() * f, r.getWidth(), r.getHeight() * f);
+            }
         }
 
         if (showTarget)
@@ -200,11 +215,17 @@ void LevelMeter::paint (juce::Graphics& g)
             g.fillRect (b.getX() + 1.0f, r.getY(), 3.0f, r.getHeight());
         }
 
+        if (peak > minDb)
+        {
+            g.setColour (peak >= -0.5f ? juce::Colour (0xffff3b30) : juce::Colours::white);
+            g.fillRect (bar.getX(), yOf (peak) - 1.0f, bar.getWidth(), 2.0f);
+        }
+
         const int ticks[] = { 0, -6, -12, -18, -24, -36, -48 };
         g.setFont (10.0f);
         for (int t : ticks)
         {
-            const float y = bar.getBottom() - ((float) t + 60.0f) / 66.0f * bar.getHeight();
+            const float y = yOf ((float) t);
             g.setColour (juce::Colour (0xff6c6f76));
             g.drawHorizontalLine ((int) y, bar.getRight(), bar.getRight() + 4.0f);
             g.setColour (t == -18 && showTarget ? kAmber : kDim);
@@ -214,13 +235,23 @@ void LevelMeter::paint (juce::Graphics& g)
     }
     else
     {
-        // rms holds gain reduction in dB (<= 0), 2 dB per segment
+        // rms holds gain reduction in dB (<= 0), 2 dB per LED, filled continuously from the top
+        const float reduction = -rms;
+
         for (int i = 0; i < numSeg; ++i)
         {
             const juce::Colour col = i >= 8 ? juce::Colour (0xffff3b30) : juce::Colour (0xffff9800);
-            const bool lit = rms < -((float) i * 2.0f) - 0.01f;
-            g.setColour (lit ? col : col.withAlpha (0.13f));
-            g.fillRect (segRect (i));
+            const auto r = segRect (i);
+
+            g.setColour (col.withAlpha (0.13f));
+            g.fillRect (r);
+
+            const float f = juce::jlimit (0.0f, 1.0f, (reduction - (float) i * 2.0f) / 2.0f);
+            if (f > 0.0f)
+            {
+                g.setColour (col);
+                g.fillRect (r.getX(), r.getY(), r.getWidth(), r.getHeight() * f);
+            }
         }
     }
 }
@@ -297,9 +328,11 @@ ChannelStripEditor::ChannelStripEditor (ChannelStripAudioProcessor& p)
     setupLabel (grCaption, "GR", 11.0f, juce::Justification::centred, true);
     setupLabel (outCaption, "OUT", 11.0f, juce::Justification::centred, true);
     setupLabel (faderCaption, "LEVEL", 11.0f, juce::Justification::centred, true);
+    setupLabel (trackLabel, "TRACK  --", 13.0f, juce::Justification::centred, true);
+    trackLabel.setColour (juce::Label::textColourId, kLcd);
 
     setSize (1060, 460);
-    startTimerHz (30);
+    startTimerHz (60);
 }
 
 ChannelStripEditor::~ChannelStripEditor()
@@ -407,9 +440,12 @@ void ChannelStripEditor::paint (juce::Graphics& g)
     g.setFont (juce::FontOptions (22.0f).withStyle ("Bold"));
     g.drawText ("CONSOLE STRIP", 30, 8, 300, 30, juce::Justification::centredLeft);
 
-    g.setColour (kDim.withAlpha (0.7f));
-    g.setFont (juce::FontOptions (10.0f));
-    g.drawText ("INPUT  >  FILTERS  >  DYNAMICS  >  EQ  >  OUTPUT", 330, 8, 400, 30, juce::Justification::centred);
+    // LCD display for the track name
+    const juce::Rectangle<float> lcd (340.0f, 10.0f, 300.0f, 26.0f);
+    g.setColour (juce::Colour (0xff08120a));
+    g.fillRoundedRectangle (lcd, 3.0f);
+    g.setColour (juce::Colour (0xff55575c));
+    g.drawRoundedRectangle (lcd.reduced (0.5f), 3.0f, 1.0f);
 
     g.setColour (kAccent);
     g.setFont (juce::FontOptions (22.0f).withStyle ("Bold"));
@@ -444,6 +480,7 @@ void ChannelStripEditor::resized()
     constexpr int kh = 90, bh = 24;
 
     sections.clear();
+    trackLabel.setBounds (344, 12, 292, 22);
     auto area = getLocalBounds().reduced (30, 10);
     area.removeFromTop (40);
 
@@ -563,16 +600,25 @@ void ChannelStripEditor::timerCallback()
 {
     using juce::Decibels;
 
+    // ---- Track name (as reported by the host)
+    const auto name = proc.getTrackName();
+    if (name != lastTrackName)
+    {
+        lastTrackName = name;
+        trackLabel.setText ("TRACK  " + (name.isEmpty() ? juce::String ("--") : name.toUpperCase()),
+                            juce::dontSendNotification);
+    }
+
     // ---- Input
     const float pkDb  = Decibels::gainToDecibels (proc.inPeak.exchange (0.0f), -100.0f);
     const float rmsDb = Decibels::gainToDecibels (proc.inRms.load(), -100.0f);
 
-    if (pkDb >= inHold) { inHold = pkDb; inHoldFrames = 60; }
+    if (pkDb >= inHold) { inHold = pkDb; inHoldFrames = 120; }
     else if (inHoldFrames > 0) --inHoldFrames;
-    else inHold = juce::jmax (pkDb, inHold - 0.6f);
+    else inHold = juce::jmax (pkDb, inHold - 0.3f);
 
-    inPeakDisp = juce::jmax (pkDb, inPeakDisp - 1.0f);
-    inRmsDisp += 0.5f * (rmsDb - inRmsDisp);
+    inPeakDisp = juce::jmax (pkDb, inPeakDisp - 0.5f);
+    inRmsDisp += 0.3f * (rmsDb - inRmsDisp);
     inMeter.setValues (inPeakDisp, inRmsDisp);
 
     peakLabel.setText ("PEAK  " + (inHold > -99.0f ? juce::String (inHold, 1) : juce::String ("--")) + " dB",
@@ -588,12 +634,12 @@ void ChannelStripEditor::timerCallback()
     const float oPk  = Decibels::gainToDecibels (proc.outPeak.exchange (0.0f), -100.0f);
     const float oRms = Decibels::gainToDecibels (proc.outRms.load(), -100.0f);
 
-    if (oPk >= outHold) { outHold = oPk; outHoldFrames = 60; }
+    if (oPk >= outHold) { outHold = oPk; outHoldFrames = 120; }
     else if (outHoldFrames > 0) --outHoldFrames;
-    else outHold = juce::jmax (oPk, outHold - 0.6f);
+    else outHold = juce::jmax (oPk, outHold - 0.3f);
 
-    outPeakDisp = juce::jmax (oPk, outPeakDisp - 1.0f);
-    outRmsDisp += 0.5f * (oRms - outRmsDisp);
+    outPeakDisp = juce::jmax (oPk, outPeakDisp - 0.5f);
+    outRmsDisp += 0.3f * (oRms - outRmsDisp);
     outMeter.setValues (outPeakDisp, outRmsDisp);
 
     outPeakLabel.setText ((outHold > -99.0f ? juce::String (outHold, 1) : juce::String ("--")) + " dB",
@@ -602,6 +648,6 @@ void ChannelStripEditor::timerCallback()
 
     // ---- Gain reduction
     const float gr = proc.gainReduction.exchange (0.0f);
-    grDisp = juce::jmin (gr, grDisp + 0.8f);
+    grDisp = juce::jmin (gr, grDisp + 0.4f);
     grMeter.setValues (0.0f, grDisp);
 }

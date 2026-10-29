@@ -90,6 +90,8 @@ private:
 
     LevelMeter inMeter, outMeter, grMeter;
     juce::Label peakLabel, rmsLabel, hintLabel, outPeakLabel, grCaption, outCaption, faderCaption;
+    juce::Label trackLabel;
+    juce::String lastTrackName;
 
     juce::Slider outFader;
     std::unique_ptr<APVTS::SliderAttachment> faderAttachment;

@@ -458,6 +458,18 @@ void ChannelStripAudioProcessor::setStateInformation (const void* data, int size
         apvts.replaceState (juce::ValueTree::fromXml (*xml));
 }
 
+void ChannelStripAudioProcessor::updateTrackProperties (const TrackProperties& properties)
+{
+    const juce::ScopedLock sl (trackNameLock);
+    trackName = properties.name.has_value() ? *properties.name : juce::String();
+}
+
+juce::String ChannelStripAudioProcessor::getTrackName() const
+{
+    const juce::ScopedLock sl (trackNameLock);
+    return trackName;
+}
+
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new ChannelStripAudioProcessor();
