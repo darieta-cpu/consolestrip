@@ -5,15 +5,27 @@
 #include <vector>
 
 //==============================================================================
+// 80s micro-rack look: black knobs with white pointer, square red LEDs, LED ladders
 class StripLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
     void drawRotarySlider (juce::Graphics&, int x, int y, int width, int height,
                            float sliderPosProportional, float rotaryStartAngle,
                            float rotaryEndAngle, juce::Slider&) override;
+
+    void drawLinearSlider (juce::Graphics&, int x, int y, int width, int height,
+                           float sliderPos, float minSliderPos, float maxSliderPos,
+                           juce::Slider::SliderStyle, juce::Slider&) override;
+
+    void drawButtonBackground (juce::Graphics&, juce::Button&, const juce::Colour&,
+                               bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override;
+
+    void drawButtonText (juce::Graphics&, juce::TextButton&,
+                         bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override;
 };
 
 //==============================================================================
+// LED ladder meter
 class LevelMeter : public juce::Component
 {
 public:
@@ -64,7 +76,7 @@ private:
     };
 
     void timerCallback() override;
-    void addKnob (const juce::String& id, const juce::String& caption, juce::Colour colour);
+    void addKnob (const juce::String& id, const juce::String& caption);
     void addToggle (const juce::String& id, const juce::String& text);
     void placeKnob (const juce::String& id, juce::Rectangle<int> cell);
     void placeToggle (const juce::String& id, juce::Rectangle<int> r);
