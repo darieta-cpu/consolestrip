@@ -24,7 +24,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(JUCE)
 
 juce_add_plugin(ConsoleStrip
-    COMPANY_NAME "DaniArieta"
+    COMPANY_NAME "HomeStudio"
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE
@@ -50,6 +50,7 @@ target_compile_definitions(ConsoleStrip PUBLIC
 target_link_libraries(ConsoleStrip
     PRIVATE
         juce::juce_audio_utils
+        juce::juce_dsp
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
