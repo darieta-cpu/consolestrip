@@ -262,13 +262,20 @@ ChannelStripEditor::ChannelStripEditor (ChannelStripAudioProcessor& p)
       proc (p),
       inMeter (LevelMeter::Mode::level, true),
       outMeter (LevelMeter::Mode::level, false),
-      grMeter (LevelMeter::Mode::gainReduction)
+      grMeter (LevelMeter::Mode::gainReduction),
+      dsMeter (LevelMeter::Mode::gainReduction)
 {
     setLookAndFeel (&laf);
 
     // Input
     addKnob ("inTrim", "TRIM");
     addToggle ("phase", "PHASE");
+
+    // Console
+    addKnob ("consoleModel", "MODEL");
+    addKnob ("consoleDrive", "DRIVE");
+    addToggle ("consoleTx", "TRAFO");
+    addToggle ("consoleOn", "CONSOLE");
 
     // Filters
     addKnob ("hpfFreq", "HPF");
@@ -280,6 +287,7 @@ ChannelStripEditor::ChannelStripEditor (ChannelStripAudioProcessor& p)
     addKnob ("gateThr", "THRESH");
     addKnob ("gateRange", "RANGE");
     addKnob ("gateRel", "RELEASE");
+    addKnob ("gateHold", "HOLD");
     addToggle ("gateOn", "GATE IN");
 
     // Compressor
@@ -288,7 +296,16 @@ ChannelStripEditor::ChannelStripEditor (ChannelStripAudioProcessor& p)
     addKnob ("compAtk", "ATTACK");
     addKnob ("compRel", "RELEASE");
     addKnob ("compMakeup", "MAKEUP");
+    addKnob ("compScHpf", "SC HPF");
+    addKnob ("compMix", "MIX");
     addToggle ("compOn", "COMP IN");
+
+    // De-esser
+    addKnob ("deEssFreq", "FREQ");
+    addKnob ("deEssThr", "THRESH");
+    addKnob ("deEssRange", "RANGE");
+    addToggle ("deEssListen", "LISTEN");
+    addToggle ("deEssOn", "DE-ESS");
 
     // EQ
     addKnob ("lfGain", "LF GAIN");
@@ -318,6 +335,7 @@ ChannelStripEditor::ChannelStripEditor (ChannelStripAudioProcessor& p)
     addAndMakeVisible (inMeter);
     addAndMakeVisible (outMeter);
     addAndMakeVisible (grMeter);
+    addAndMakeVisible (dsMeter);
 
     setupLabel (peakLabel, "PEAK --", 12.0f, juce::Justification::centred, true);
     setupLabel (rmsLabel, "RMS --", 12.0f, juce::Justification::centred, true);
@@ -331,7 +349,7 @@ ChannelStripEditor::ChannelStripEditor (ChannelStripAudioProcessor& p)
     setupLabel (trackLabel, "TRACK  --", 13.0f, juce::Justification::centred, true);
     trackLabel.setColour (juce::Label::textColourId, kLcd);
 
-    setSize (1060, 460);
+    setSize (1280, 460);
     startTimerHz (60);
 }
 
@@ -477,7 +495,7 @@ void ChannelStripEditor::paint (juce::Graphics& g)
 
 void ChannelStripEditor::resized()
 {
-    constexpr int kh = 90, bh = 24;
+    constexpr int kh = 80, bh = 24;
 
     sections.clear();
     trackLabel.setBounds (344, 12, 292, 22);
@@ -509,6 +527,16 @@ void ChannelStripEditor::resized()
         hintLabel.setBounds (c.removeFromTop (110));
     }
 
+    // CONSOLE
+    {
+        auto c = take (84, "CONSOLE");
+        placeToggle ("consoleOn", c.removeFromBottom (bh));
+        placeKnob ("consoleModel", c.removeFromTop (kh));
+        placeKnob ("consoleDrive", c.removeFromTop (kh));
+        c.removeFromTop (6);
+        placeToggle ("consoleTx", c.removeFromTop (bh));
+    }
+
     // FILTERS
     {
         auto c = take (84, "FILTERS");
@@ -526,6 +554,7 @@ void ChannelStripEditor::resized()
         placeKnob ("gateThr", c.removeFromTop (kh));
         placeKnob ("gateRange", c.removeFromTop (kh));
         placeKnob ("gateRel", c.removeFromTop (kh));
+        placeKnob ("gateHold", c.removeFromTop (kh));
     }
 
     // COMPRESSOR
@@ -537,8 +566,23 @@ void ChannelStripEditor::resized()
         placeKnob ("compThr", col0.removeFromTop (kh));
         placeKnob ("compAtk", col0.removeFromTop (kh));
         placeKnob ("compMakeup", col0.removeFromTop (kh));
+        placeKnob ("compMix", col0.removeFromTop (kh));
         placeKnob ("compRatio", col1.removeFromTop (kh));
         placeKnob ("compRel", col1.removeFromTop (kh));
+        placeKnob ("compScHpf", col1.removeFromTop (kh));
+    }
+
+    // DE-ESSER
+    {
+        auto c = take (112, "DE-ESSER");
+        placeToggle ("deEssOn", c.removeFromBottom (bh));
+        c.removeFromBottom (4);
+        placeToggle ("deEssListen", c.removeFromBottom (bh));
+        auto meterCol = c.removeFromRight (28);
+        dsMeter.setBounds (meterCol.removeFromTop (kh * 3).reduced (0, 6));
+        placeKnob ("deEssFreq", c.removeFromTop (kh));
+        placeKnob ("deEssThr", c.removeFromTop (kh));
+        placeKnob ("deEssRange", c.removeFromTop (kh));
     }
 
     // EQ
@@ -650,4 +694,9 @@ void ChannelStripEditor::timerCallback()
     const float gr = proc.gainReduction.exchange (0.0f);
     grDisp = juce::jmin (gr, grDisp + 0.4f);
     grMeter.setValues (0.0f, grDisp);
+
+    // ---- De-esser gain reduction
+    const float ds = proc.deEssReduction.exchange (0.0f);
+    dsDisp = juce::jmin (ds, dsDisp + 0.4f);
+    dsMeter.setValues (0.0f, dsDisp);
 }

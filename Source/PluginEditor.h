@@ -88,7 +88,7 @@ private:
     std::map<juce::String, std::unique_ptr<Knob>> knobs;
     std::map<juce::String, std::unique_ptr<Toggle>> toggles;
 
-    LevelMeter inMeter, outMeter, grMeter;
+    LevelMeter inMeter, outMeter, grMeter, dsMeter;
     juce::Label peakLabel, rmsLabel, hintLabel, outPeakLabel, grCaption, outCaption, faderCaption;
     juce::Label trackLabel;
     juce::String lastTrackName;
@@ -99,7 +99,7 @@ private:
     std::vector<std::pair<juce::String, juce::Rectangle<int>>> sections;
 
     float inHold = -100.0f, inPeakDisp = -100.0f, inRmsDisp = -100.0f;
-    float outPeakDisp = -100.0f, outRmsDisp = -100.0f, outHold = -100.0f, grDisp = 0.0f;
+    float outPeakDisp = -100.0f, outRmsDisp = -100.0f, outHold = -100.0f, grDisp = 0.0f, dsDisp = 0.0f;
     int inHoldFrames = 0, outHoldFrames = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ChannelStripEditor)

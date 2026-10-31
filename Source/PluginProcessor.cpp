@@ -3,7 +3,7 @@
 
 namespace
 {
-    enum class Fmt { db, hz, ms, sec, ratio, q, fader };
+    enum class Fmt { db, hz, ms, sec, ratio, q, fader, pct };
 
     juce::String formatValue (Fmt f, float v)
     {
@@ -16,6 +16,7 @@ namespace
             case Fmt::sec:   return juce::String (v, 2) + " s";
             case Fmt::ratio: return juce::String (v, 1) + ":1";
             case Fmt::q:     return juce::String (v, 2);
+            case Fmt::pct:   return juce::String ((int) std::round (v)) + " %";
             case Fmt::fader: return v <= -59.9f ? juce::String ("-inf") : juce::String (v, 1) + " dB";
         }
         return {};
@@ -25,6 +26,17 @@ namespace
     {
         float cur = a.load (std::memory_order_relaxed);
         while (v > cur && ! a.compare_exchange_weak (cur, v)) {}
+    }
+
+    // Curve di saturazione dei 3 modelli di console (pendenza 1 nell'origine)
+    inline float consoleShape (int model, float u) noexcept
+    {
+        switch (model)
+        {
+            case 1:  return u >= 0.0f ? std::tanh (u) : std::tanh (0.75f * u) / 0.75f;   // asimmetrica: armoniche pari
+            case 2:  { const float u2 = u * u; return u / std::sqrt (std::sqrt (1.0f + u2 * u2)); } // ginocchio piu' netto
+            default: return std::tanh (u);                                                  // simmetrica, morbida
+        }
     }
 
     void atomicMin (std::atomic<float>& a, float v) noexcept
@@ -68,6 +80,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout ChannelStripAudioProcessor::
     addFloat ("inTrim", "Input Trim", -24.0f, 24.0f, 0.0f, 0.1f, Fmt::db);
     addBool  ("phase", "Phase Invert");
 
+    // Console (saturazione a monte)
+    addBool  ("consoleOn", "Console In");
+    layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "consoleModel", 1 }, "Console Model",
+                                                              juce::StringArray { "CLEAN", "WARM", "PUNCH" }, 0));
+    addFloat ("consoleDrive", "Console Drive", 0.0f, 100.0f, 30.0f, 1.0f, Fmt::pct);
+    addBool  ("consoleTx", "Console Transformer");
+
     // Filters
     addFloat ("hpfFreq", "HPF Freq", 16.0f, 350.0f, 80.0f, 1.0f, Fmt::hz, 70.0f);
     addBool  ("hpfOn", "HPF In");
@@ -78,6 +97,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout ChannelStripAudioProcessor::
     addFloat ("gateThr", "Gate Threshold", -70.0f, 0.0f, -50.0f, 0.1f, Fmt::db);
     addFloat ("gateRange", "Gate Range", -60.0f, 0.0f, -30.0f, 0.1f, Fmt::db);
     addFloat ("gateRel", "Gate Release", 0.05f, 4.0f, 0.3f, 0.01f, Fmt::sec, 0.5f);
+    addFloat ("gateHold", "Gate Hold", 0.0f, 500.0f, 50.0f, 1.0f, Fmt::ms, 100.0f);
     addBool  ("gateOn", "Gate In");
 
     // Compressor
@@ -86,7 +106,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout ChannelStripAudioProcessor::
     addFloat ("compAtk", "Comp Attack", 0.1f, 50.0f, 10.0f, 0.1f, Fmt::ms, 5.0f);
     addFloat ("compRel", "Comp Release", 0.05f, 2.0f, 0.3f, 0.01f, Fmt::sec, 0.4f);
     addFloat ("compMakeup", "Comp Makeup", 0.0f, 24.0f, 0.0f, 0.1f, Fmt::db);
+    addFloat ("compScHpf", "Comp SC HPF", 20.0f, 400.0f, 20.0f, 1.0f, Fmt::hz, 100.0f);
+    addFloat ("compMix", "Comp Mix", 0.0f, 100.0f, 100.0f, 1.0f, Fmt::pct);
     addBool  ("compOn", "Comp In");
+
+    // De-esser
+    addFloat ("deEssFreq", "DeEss Freq", 3000.0f, 10000.0f, 6500.0f, 1.0f, Fmt::hz, 6000.0f);
+    addFloat ("deEssThr", "DeEss Threshold", -60.0f, 0.0f, -30.0f, 0.1f, Fmt::db);
+    addFloat ("deEssRange", "DeEss Range", 0.0f, 20.0f, 10.0f, 0.1f, Fmt::db);
+    addBool  ("deEssListen", "DeEss Listen");
+    addBool  ("deEssOn", "DeEss In");
 
     // EQ
     addFloat ("lfFreq", "LF Freq", 30.0f, 450.0f, 100.0f, 1.0f, Fmt::hz, 120.0f);
@@ -141,23 +170,51 @@ ChannelStripAudioProcessor::Params ChannelStripAudioProcessor::readParams() cons
     p.lpfFreq = f ("lpfFreq");      p.lpfOn = b ("lpfOn");
     p.gateThr = f ("gateThr");      p.gateRange = f ("gateRange");
     p.gateRel = f ("gateRel");      p.gateOn = b ("gateOn");
+    p.gateHold = f ("gateHold");
     p.compThr = f ("compThr");      p.compRatio = f ("compRatio");
     p.compAtk = f ("compAtk");      p.compRel = f ("compRel");
     p.compMakeup = f ("compMakeup"); p.compOn = b ("compOn");
+    p.compScHpf = f ("compScHpf");  p.compMix = f ("compMix") / 100.0f;
+    p.deEssFreq = f ("deEssFreq");  p.deEssThr = f ("deEssThr");
+    p.deEssRange = f ("deEssRange"); p.deEssListen = b ("deEssListen"); p.deEssOn = b ("deEssOn");
     p.lfFreq = f ("lfFreq");        p.lfGain = f ("lfGain");   p.lfBell = b ("lfBell");
     p.lmfFreq = f ("lmfFreq");      p.lmfGain = f ("lmfGain"); p.lmfQ = f ("lmfQ");
     p.hmfFreq = f ("hmfFreq");      p.hmfGain = f ("hmfGain"); p.hmfQ = f ("hmfQ");
     p.hfFreq = f ("hfFreq");        p.hfGain = f ("hfGain");   p.hfBell = b ("hfBell");
     p.eqOn = b ("eqOn");
     p.dynPost = b ("dynPost");
+    p.consoleOn = b ("consoleOn");
+    p.consoleTx = b ("consoleTx");
+    p.consoleModel = juce::jlimit (0, 2, (int) std::round (f ("consoleModel")));
+    p.consoleDrive = f ("consoleDrive") / 100.0f;
     p.outDb = f ("outLevel");
     return p;
 }
 
 //==============================================================================
-void ChannelStripAudioProcessor::prepareToPlay (double sampleRate, int)
+void ChannelStripAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     sr = sampleRate;
+
+    // Console stage
+    maxBlock = juce::jmax (samplesPerBlock, 64);
+    oversampling.initProcessing ((size_t) maxBlock);
+    oversampling.reset();
+    dryBuffer.setSize (2, maxBlock);
+    dryBuffer.clear();
+    consoleMix.reset (sr, 0.02);
+    consoleMix.setCurrentAndTargetValue (0.0f);
+    consoleWasOn = false;
+    cachedModel = -1;
+    dcR = std::exp (-2.0 * Biquad::pi() * 8.0 / sr);
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        txLow[ch].makeLowShelf (sr, 90.0, 0.7071, 2.0);     // "peso" sui bassi prima della saturazione
+        txHigh[ch].makeHighShelf (sr, 12000.0, 0.7071, -1.5); // lieve cedimento sulle alte dopo
+        txLow[ch].reset();
+        txHigh[ch].reset();
+        dcX[ch] = dcY[ch] = 0.0;
+    }
 
     const auto p = readParams();
     trimSmooth.reset (sr, 0.03);
@@ -171,7 +228,9 @@ void ChannelStripAudioProcessor::prepareToPlay (double sampleRate, int)
         lf[ch].reset(); lmf[ch].reset(); hmf[ch].reset(); hf[ch].reset();
     }
 
-    gateEnv = 0.0f; gateGain = 1.0f; gateOpen = false;
+    gateEnv = 0.0f; gateGain = 1.0f; gateOpen = false; gateHoldCnt = 0;
+    dsEnv = 0.0f;
+    for (int ch = 0; ch < 2; ++ch) { scHpf[ch].reset(); dsBp[ch].reset(); }
     compGrDb = 0.0f;
     msIn = msOut = 0.0f;
 }
@@ -191,6 +250,7 @@ void ChannelStripAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     const Params p = readParams();
 
     stageInput (buffer, p);
+    stageConsole (buffer, p);
 
     if (p.hpfOn || p.lpfOn)
         stageFilters (buffer, p);
@@ -239,6 +299,126 @@ void ChannelStripAudioProcessor::stageInput (juce::AudioBuffer<float>& buffer, c
     inRms.store (std::sqrt (msIn));
 }
 
+void ChannelStripAudioProcessor::updateConsoleShaper (int model, float drive01)
+{
+    if (model == cachedModel && drive01 == cachedDrive)
+        return;
+
+    cachedModel = model;
+    cachedDrive = drive01;
+
+    static constexpr float maxDriveDb[3] = { 12.0f, 15.0f, 18.0f };
+    consoleGain = juce::Decibels::decibelsToGain (drive01 * maxDriveDb[model]);
+    consoleInvGain = 1.0f / consoleGain;
+
+    // Compensazione di livello: a -18 dBFS RMS (livello nominale) il segnale esce con lo stesso RMS
+    constexpr int N = 512;
+    const double A = std::pow (10.0, -15.0 / 20.0);   // picco di una sinusoide a -18 dBFS RMS
+    double sumIn = 0.0, sumOut = 0.0, mean = 0.0;
+    float y[N];
+    for (int n = 0; n < N; ++n)
+    {
+        const float x = (float) (A * std::sin (2.0 * Biquad::pi() * 8.0 * (double) n / (double) N));
+        y[n] = consoleShape (model, x * consoleGain) * consoleInvGain;
+        sumIn += (double) x * (double) x;
+        mean += (double) y[n];
+    }
+    mean /= (double) N;
+    for (int n = 0; n < N; ++n)
+        sumOut += ((double) y[n] - mean) * ((double) y[n] - mean);
+
+    consoleMakeup = sumOut > 0.0 ? (float) std::sqrt (sumIn / sumOut) : 1.0f;
+}
+
+void ChannelStripAudioProcessor::stageConsole (juce::AudioBuffer<float>& buffer, const Params& p)
+{
+    consoleMix.setTargetValue (p.consoleOn ? 1.0f : 0.0f);
+
+    // modulo spento e dissolvenza finita: nessuna elaborazione
+    if (! p.consoleOn && consoleMix.getCurrentValue() <= 0.0f)
+    {
+        consoleWasOn = false;
+        return;
+    }
+
+    if (! consoleWasOn)
+    {
+        oversampling.reset();
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            txLow[ch].reset();
+            txHigh[ch].reset();
+            dcX[ch] = dcY[ch] = 0.0;
+        }
+        consoleWasOn = true;
+    }
+
+    updateConsoleShaper (p.consoleModel, p.consoleDrive);
+
+    if (! p.consoleTx)
+        for (int ch = 0; ch < 2; ++ch) { txLow[ch].reset(); txHigh[ch].reset(); }
+
+    const int numCh = juce::jmin (buffer.getNumChannels(), 2);
+    const int total = buffer.getNumSamples();
+    juce::dsp::AudioBlock<float> whole (buffer);
+
+    for (int pos = 0; pos < total; pos += maxBlock)
+    {
+        const int n = juce::jmin (maxBlock, total - pos);
+
+        for (int ch = 0; ch < numCh; ++ch)
+            dryBuffer.copyFrom (ch, 0, buffer, ch, pos, n);
+
+        auto block = whole.getSubBlock ((size_t) pos, (size_t) n);
+
+        if (p.consoleTx)
+            for (int ch = 0; ch < numCh; ++ch)
+            {
+                float* d = block.getChannelPointer ((size_t) ch);
+                for (int i = 0; i < n; ++i)
+                    d[i] = txLow[ch].process (d[i]);
+            }
+
+        auto up = oversampling.processSamplesUp (block);
+        const int upN = (int) up.getNumSamples();
+        for (int ch = 0; ch < numCh; ++ch)
+        {
+            float* d = up.getChannelPointer ((size_t) ch);
+            for (int i = 0; i < upN; ++i)
+                d[i] = consoleShape (p.consoleModel, d[i] * consoleGain) * consoleInvGain;
+        }
+        oversampling.processSamplesDown (block);
+
+        for (int ch = 0; ch < numCh; ++ch)
+        {
+            float* d = block.getChannelPointer ((size_t) ch);
+            for (int i = 0; i < n; ++i)
+            {
+                const double x = (double) d[i];
+                const double y = x - dcX[ch] + dcR * dcY[ch];   // elimina il DC delle curve asimmetriche
+                dcX[ch] = x;
+                dcY[ch] = y;
+
+                float v = (float) y * consoleMakeup;
+                if (p.consoleTx)
+                    v = txHigh[ch].process (v);
+                d[i] = v;
+            }
+        }
+
+        // dissolvenza dry/wet (attivazione e disattivazione senza click)
+        for (int i = 0; i < n; ++i)
+        {
+            const float m = consoleMix.getNextValue();
+            for (int ch = 0; ch < numCh; ++ch)
+            {
+                float* out = buffer.getWritePointer (ch) + pos;
+                out[i] = dryBuffer.getSample (ch, i) * (1.0f - m) + out[i] * m;
+            }
+        }
+    }
+}
+
 void ChannelStripAudioProcessor::stageFilters (juce::AudioBuffer<float>& buffer, const Params& p)
 {
     const int n = buffer.getNumSamples();
@@ -277,10 +457,11 @@ void ChannelStripAudioProcessor::stageFilters (juce::AudioBuffer<float>& buffer,
 
 void ChannelStripAudioProcessor::stageDynamics (juce::AudioBuffer<float>& buffer, const Params& p)
 {
-    if (! p.gateOn && ! p.compOn)
+    if (! p.gateOn && ! p.compOn && ! p.deEssOn)
     {
         gateGain = 1.0f;
         compGrDb = 0.0f;
+        dsEnv = 0.0f;
         return;
     }
 
@@ -296,6 +477,7 @@ void ChannelStripAudioProcessor::stageDynamics (juce::AudioBuffer<float>& buffer
     const float gateThrLin = juce::Decibels::decibelsToGain (p.gateThr);
     const float gateCloseLin = gateThrLin * 0.7079f; // 3 dB hysteresis
     const float rangeLin = juce::Decibels::decibelsToGain (p.gateRange);
+    const int holdSamples = (int) (p.gateHold * 0.001 * sr);
 
     // Compressor constants
     const float atk = std::exp (-1.0f / (p.compAtk * 0.001f * (float) sr));
@@ -303,6 +485,29 @@ void ChannelStripAudioProcessor::stageDynamics (juce::AudioBuffer<float>& buffer
     const float ratio = juce::jmax (1.0f, p.compRatio);
     const float knee = 6.0f;
     float minGr = 0.0f;
+
+    // Sidechain high-pass del compressore (20 Hz = escluso)
+    const bool useScHpf = p.compOn && p.compScHpf > 21.0f;
+    if (useScHpf)
+        for (int ch = 0; ch < numCh; ++ch)
+            scHpf[ch].makeHighPass (sr, p.compScHpf, 0.7071);
+    else
+        for (int ch = 0; ch < 2; ++ch)
+            scHpf[ch].reset();
+
+    // De-esser: banda di rilevamento e di riduzione (split-band)
+    const float dsAtk = std::exp (-1.0f / (0.001f * (float) sr));
+    const float dsRel = std::exp (-1.0f / (0.06f * (float) sr));
+    float dsMinGr = 0.0f;
+    if (p.deEssOn)
+        for (int ch = 0; ch < numCh; ++ch)
+            dsBp[ch].makeBandPass (sr, p.deEssFreq, 1.2);
+    else
+    {
+        dsEnv = 0.0f;
+        for (int ch = 0; ch < 2; ++ch)
+            dsBp[ch].reset();
+    }
 
     if (! p.gateOn) gateGain = 1.0f;
     if (! p.compOn) compGrDb = 0.0f;
@@ -317,8 +522,16 @@ void ChannelStripAudioProcessor::stageDynamics (juce::AudioBuffer<float>& buffer
             const float lvl = juce::jmax (std::abs (l), std::abs (r));
             gateEnv = lvl > gateEnv ? lvl : lvl + gateEnvRel * (gateEnv - lvl);
 
-            if (! gateOpen && gateEnv > gateThrLin)      gateOpen = true;
-            else if (gateOpen && gateEnv < gateCloseLin) gateOpen = false;
+            if (gateEnv > gateThrLin)
+            {
+                gateOpen = true;
+                gateHoldCnt = holdSamples;      // ogni volta che supera la soglia, riparte la tenuta
+            }
+            else if (gateOpen && gateEnv < gateCloseLin)
+            {
+                if (gateHoldCnt > 0) --gateHoldCnt;
+                else                 gateOpen = false;
+            }
 
             const float target = gateOpen ? 1.0f : rangeLin;
             const float c = target > gateGain ? gateAtk : gateRelC;
@@ -330,7 +543,15 @@ void ChannelStripAudioProcessor::stageDynamics (juce::AudioBuffer<float>& buffer
 
         if (p.compOn)
         {
-            const float lvl = juce::jmax (std::abs (l), std::abs (r));
+            // il rilevatore legge il segnale filtrato, il guadagno si applica al segnale intero
+            float scL = l, scR = r;
+            if (useScHpf)
+            {
+                scL = scHpf[0].process (l);
+                scR = d1 != nullptr ? scHpf[1].process (r) : scL;
+            }
+
+            const float lvl = juce::jmax (std::abs (scL), std::abs (scR));
             const float xDb = 20.0f * std::log10 (juce::jmax (lvl, 1.0e-6f));
             const float over = xDb - p.compThr;
 
@@ -349,10 +570,40 @@ void ChannelStripAudioProcessor::stageDynamics (juce::AudioBuffer<float>& buffer
             const float c = target < compGrDb ? atk : rel;
             compGrDb = target + c * (compGrDb - target);
 
+            // dry/wet (compressione parallela): il makeup agisce sul ramo compresso
             const float g = juce::Decibels::decibelsToGain (compGrDb + p.compMakeup);
-            l *= g;
-            r *= g;
+            const float gEff = (1.0f - p.compMix) + p.compMix * g;
+            l *= gEff;
+            r *= gEff;
             minGr = juce::jmin (minGr, compGrDb);
+        }
+
+        if (p.deEssOn)
+        {
+            const float bpL = dsBp[0].process (l);
+            const float bpR = d1 != nullptr ? dsBp[1].process (r) : bpL;
+
+            if (p.deEssListen)
+            {
+                l = bpL;
+                r = bpR;
+            }
+            else
+            {
+                const float lvl = juce::jmax (std::abs (bpL), std::abs (bpR));
+                const float c = lvl > dsEnv ? dsAtk : dsRel;
+                dsEnv = lvl + c * (dsEnv - lvl);
+
+                const float envDb = 20.0f * std::log10 (juce::jmax (dsEnv, 1.0e-6f));
+                const float over = envDb - p.deEssThr;
+                const float grDb = over > 0.0f ? juce::jmin (p.deEssRange, over * 0.75f) : 0.0f; // rapporto 4:1
+
+                // toglie dalla banda solo la parte da ridurre: fuori banda il segnale resta identico
+                const float removal = 1.0f - juce::Decibels::decibelsToGain (-grDb);
+                l -= bpL * removal;
+                r -= bpR * removal;
+                dsMinGr = juce::jmin (dsMinGr, -grDb);
+            }
         }
 
         d0[i] = l;
@@ -362,6 +613,9 @@ void ChannelStripAudioProcessor::stageDynamics (juce::AudioBuffer<float>& buffer
 
     if (p.compOn)
         atomicMin (gainReduction, minGr);
+
+    if (p.deEssOn)
+        atomicMin (deEssReduction, dsMinGr);
 }
 
 void ChannelStripAudioProcessor::stageEq (juce::AudioBuffer<float>& buffer, const Params& p)

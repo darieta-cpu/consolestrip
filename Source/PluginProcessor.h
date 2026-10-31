@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_audio_utils/juce_audio_utils.h>
+#include <juce_dsp/juce_dsp.h>
 #include <atomic>
 #include <cmath>
 
@@ -52,6 +53,13 @@ struct Biquad
         const double w0 = 2.0 * pi() * limitFreq (fs, f) / fs;
         const double c = std::cos (w0), alpha = std::sin (w0) / (2.0 * q);
         setRaw ((1.0 - c) * 0.5, 1.0 - c, (1.0 - c) * 0.5, 1.0 + alpha, -2.0 * c, 1.0 - alpha);
+    }
+
+    void makeBandPass (double fs, double f, double q) noexcept
+    {
+        const double w0 = 2.0 * pi() * limitFreq (fs, f) / fs;
+        const double c = std::cos (w0), alpha = std::sin (w0) / (2.0 * q);
+        setRaw (alpha, 0.0, -alpha, 1.0 + alpha, -2.0 * c, 1.0 - alpha);
     }
 
     void makePeak (double fs, double f, double q, double gainDb) noexcept
@@ -134,23 +142,32 @@ public:
     std::atomic<float> inRms { 0.0f };        // linear, ~300 ms window, after input trim
     std::atomic<float> outPeak { 0.0f };      // linear
     std::atomic<float> outRms { 0.0f };       // linear
-    std::atomic<float> gainReduction { 0.0f }; // dB, <= 0
+    std::atomic<float> gainReduction { 0.0f }; // dB, <= 0 (compressore)
+    std::atomic<float> deEssReduction { 0.0f }; // dB, <= 0 (de-esser)
 
 private:
     struct Params
     {
         float inTrimDb = 0, outDb = 0;
+        bool consoleOn = false, consoleTx = false;
+        int consoleModel = 0;
+        float consoleDrive = 0.3f;   // 0..1
         bool phase = false, hpfOn = false, lpfOn = false, gateOn = false, compOn = false,
              eqOn = false, dynPost = false, lfBell = false, hfBell = false;
         float hpfFreq = 80, lpfFreq = 18000;
-        float gateThr = -50, gateRange = -30, gateRel = 0.3f;
+        float gateThr = -50, gateRange = -30, gateRel = 0.3f, gateHold = 50;
         float compThr = -10, compRatio = 4, compAtk = 10, compRel = 0.3f, compMakeup = 0;
+        float compScHpf = 20, compMix = 1.0f;
+        bool deEssOn = false, deEssListen = false;
+        float deEssFreq = 6500, deEssThr = -30, deEssRange = 10;
         float lfFreq = 100, lfGain = 0, lmfFreq = 700, lmfGain = 0, lmfQ = 1,
               hmfFreq = 3000, hmfGain = 0, hmfQ = 1, hfFreq = 8000, hfGain = 0;
     };
 
     Params readParams() const;
     void stageInput (juce::AudioBuffer<float>&, const Params&);
+    void stageConsole (juce::AudioBuffer<float>&, const Params&);
+    void updateConsoleShaper (int model, float drive01);
     void stageFilters (juce::AudioBuffer<float>&, const Params&);
     void stageDynamics (juce::AudioBuffer<float>&, const Params&);
     void stageEq (juce::AudioBuffer<float>&, const Params&);
@@ -160,11 +177,25 @@ private:
     juce::String trackName;
 
     double sr = 44100.0;
+
+    // Console stage (saturation with 4x oversampling)
+    juce::dsp::Oversampling<float> oversampling { 2, 2, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true, false };
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> consoleMix;
+    juce::AudioBuffer<float> dryBuffer;
+    Biquad txLow[2], txHigh[2];
+    double dcX[2] { 0.0, 0.0 }, dcY[2] { 0.0, 0.0 }, dcR = 0.999;
+    int maxBlock = 512;
+    bool consoleWasOn = false;
+    int cachedModel = -1;
+    float cachedDrive = -1.0f, consoleGain = 1.0f, consoleInvGain = 1.0f, consoleMakeup = 1.0f;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> trimSmooth, outSmooth;
 
     Biquad hpf1[2], hpf2[2], lpf[2], lf[2], lmf[2], hmf[2], hf[2];
 
     float gateEnv = 0.0f, gateGain = 1.0f;
+    int gateHoldCnt = 0;
+    Biquad scHpf[2], dsBp[2];
+    float dsEnv = 0.0f;
     bool gateOpen = false;
     float compGrDb = 0.0f;
     float msIn = 0.0f, msOut = 0.0f;
