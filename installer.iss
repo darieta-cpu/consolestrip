@@ -2,7 +2,7 @@
 AppName=Console Strip
 AppVersion=1.0.0
 AppPublisher=DaniArieta
-DefaultDirName={autopf}\Console Strip
+DefaultDirName={autopf}\ConsoleStrip
 DisableDirPage=yes
 DisableProgramGroupPage=yes
 PrivilegesRequired=admin
@@ -14,4 +14,4 @@ Compression=lzma
 SolidCompression=yes
 
 [Files]
-Source: "dist\Console Strip.vst3\*"; DestDir: "{commonpf64}\Common Files\VST3\ConsoleStrip.vst3"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "dist\ConsoleStrip.vst3\*"; DestDir: "{commonpf64}\Common Files\VST3\ConsoleStrip.vst3"; Flags: ignoreversion recursesubdirs createallsubdirs
