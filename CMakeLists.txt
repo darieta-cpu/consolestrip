@@ -24,14 +24,14 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(JUCE)
 
 juce_add_plugin(ConsoleStrip
-    COMPANY_NAME "HomeStudio"
+    COMPANY_NAME "DaniArieta"
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE
     PLUGIN_MANUFACTURER_CODE Hmst
     PLUGIN_CODE Cstp
     FORMATS ${PLUGIN_FORMATS}
-    PRODUCT_NAME "Console Strip"
+    PRODUCT_NAME "ConsoleStrip"
     COPY_PLUGIN_AFTER_BUILD FALSE
     AU_MAIN_TYPE kAudioUnitType_Effect
     VST3_CATEGORIES Fx)
