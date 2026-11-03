@@ -14,4 +14,4 @@ Compression=lzma
 SolidCompression=yes
 
 [Files]
-Source: "dist\Console Strip.vst3\*"; DestDir: "{commonpf64}\Common Files\VST3\Console Strip.vst3"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "dist\Console Strip.vst3\*"; DestDir: "{commonpf64}\Common Files\VST3\ConsoleStrip.vst3"; Flags: ignoreversion recursesubdirs createallsubdirs
